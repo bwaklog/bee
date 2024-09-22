@@ -1,0 +1,9 @@
+# idk why this exists
+.DS_Store
+
+.env
+bee
+
+# might exceed storage at some point
+# not here for Git-LFS
+re.db
