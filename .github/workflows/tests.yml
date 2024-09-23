@@ -1,0 +1,22 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "rust-dev" ]
+  pull_request:
+    branches: [ "rust-dev" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Building project
+      run: cargo build --verbose
+    - name: Running raft package tests
+      run: cargo test -p bee raft -- --nocapture

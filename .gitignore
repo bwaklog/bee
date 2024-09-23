@@ -4,6 +4,18 @@
 .env
 bee
 
+# Not commiting the tests for a while
+# because of how incomplete they are
+tests/
+
+# Old go project
+temp/
+
 # might exceed storage at some point
 # not here for Git-LFS
 re.db
+
+
+# Added by cargo
+
+/target
