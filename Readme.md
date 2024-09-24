@@ -6,7 +6,7 @@
 
 ### SEP 23
 
-Plans for persistance being a LSM Tree implemented with Skiplists. Possible case study between [B+Tree and Skiplists](https://youtu.be/z-yC2o4GZvg?si=LFOXvSXtP8pqyjPR)
+Genesis, started of with a go implemnetation but...want to try rust for no reason, lets see how that goes :P
 
 ### SEP 24
 

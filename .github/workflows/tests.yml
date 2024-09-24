@@ -1,10 +1,10 @@
-name: Rust
+name: Rust project tests
 
 on:
   push:
-    branches: [ "rust-dev" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "rust-dev" ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,4 +19,4 @@ jobs:
     - name: Building project
       run: cargo build --verbose
     - name: Running raft package tests
-      run: cargo test -p bee raft -- --nocapture
+      run: cargo test -p bee -- --nocapture

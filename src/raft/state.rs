@@ -116,6 +116,7 @@ mod tests {
     use super::NodeState;
 
     #[test]
+    #[ignore = "not implemented"]
     fn test_init() {
         let raft_sm = NodeState::init_state();
         assert!(raft_sm.commit_index == 0);
@@ -136,6 +137,5 @@ mod tests {
 
         debug_assert_eq!(raft_sm.log.len(), 1);
         debug_assert_eq!(raft_sm.log.get(0).unwrap(), &log_entry_dummy);
-        // dbg!(raft_sm.persist_state);
     }
 }

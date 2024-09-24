@@ -1,9 +1,0 @@
-# 2024 SEP
-#
-# store.yml contains the default configuration -
-# a distributed store including information of
-# in the cluster
-#
-# along with this, store.yml contains a target data 
-# path and other configurations such as file-cap 
-# sizes for nodes can vary across the cluster
