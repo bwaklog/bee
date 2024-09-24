@@ -1,3 +1,5 @@
 pub mod raft;
-pub mod consensus;
+pub mod conn;
+mod sm;
+mod state;
 mod util;
