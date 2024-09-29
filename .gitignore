@@ -6,7 +6,9 @@ bee
 
 # Not commiting the tests for a while
 # because of how incomplete they are
+# using for non-rust based tests for now
 tests/
+
 
 # Old go project
 temp/

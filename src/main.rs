@@ -1,11 +1,14 @@
-mod storage;
 mod raft;
+mod storage;
+mod utils;
+
+use std::error::Error;
+use utils::helpers;
 
 use storage::*;
-use raft::raft::*;
 
-fn main() {
-    println!("Raft and kv's");
-    // let raft: Raft<u32> = Raft::init();
-    // dbg!(raft);
+fn main() -> Result<(), Box<dyn Error>> {
+    let config = utils::helpers::parse_config().unwrap();
+    dbg!(config);
+    Ok(())
 }

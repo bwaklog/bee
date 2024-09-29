@@ -1,7 +1,7 @@
 // A serer will show 3 primary states of
 // - follower, candidate and Leader.
 
-use std::sync;
+use std::{error, sync};
 
 use crate::store::{self, LogEntry};
 
@@ -54,6 +54,20 @@ impl NodeState {
         // assuming we parse a structured file
         // at this point
         None
+    }
+
+    pub fn persist_state() -> Result<(), std::io::Error> {
+        todo!()
+    }
+
+    pub fn start_election(&mut self) {
+        if self.node_state != State::FOLLOWER {
+            return;
+        }
+        self.node_state = State::CANDIDATE;
+        self.current_term += 1;
+
+        // start election timer
     }
 
     // initialization of a node
