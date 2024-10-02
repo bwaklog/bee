@@ -1,4 +1,4 @@
-name: Rust project tests
+name: Rust project test
 
 on:
   push:
@@ -12,11 +12,13 @@ env:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Building project
       run: cargo build --verbose
+
     - name: Running raft package tests
       run: cargo test -p bee -- --nocapture

@@ -1,0 +1,30 @@
+name: Rust project benchmark
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Hyperfine
+      run: |
+          brew update
+          brew install hyperfine
+
+    - name: Building with --release
+      run: cargo build --release
+
+    - name: Benchmarking
+      run: hyperfine --prepare=true --warmup 20 "./target/release/bee -c config.yml"

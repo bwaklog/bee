@@ -43,15 +43,16 @@ impl From<std::io::Error> for HelperErrors {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RaftConfig {
-    listener_addr: SocketAddr,
-    connections: Vec<SocketAddr>,
+    pub persist_path: PathBuf,
+    pub listener_addr: SocketAddr,
+    pub connections: Vec<SocketAddr>,
 }
 
 #[derive(Debug)]
 pub struct StoreConfig {
-    local_path: PathBuf,
+    pub local_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -61,8 +62,8 @@ pub struct Config {
     pub store: StoreConfig,
 }
 
-pub fn parse_config() -> HelperErrorResult<Config> {
-    let content = fs::read_to_string("config.yml")?;
+pub fn parse_config(state_path: PathBuf) -> HelperErrorResult<Config> {
+    let content = fs::read_to_string(state_path.as_path())?;
     let yaml_content = YamlLoader::load_from_str(&*content).unwrap();
 
     let metadata = from_yaml_hash("metadata", yaml_content.get(0).unwrap()).unwrap();
@@ -73,6 +74,13 @@ pub fn parse_config() -> HelperErrorResult<Config> {
     // Metadata
     let node_name = from_yaml_hash("node_name", metadata)
         .and_then(|yaml_string| yaml_enum_to_string(yaml_string))?;
+
+    let persist_path = from_yaml_hash("persist_file", raft_conf_yaml)
+        .and_then(|persist_path| yaml_enum_to_string(persist_path))
+        .and_then(|path_str| {
+            let path = PathBuf::from(path_str);
+            Ok(path)
+        })?;
 
     let listener_addr = from_yaml_hash("listiner_addr", raft_conf_yaml)
         .and_then(|addr_string| yaml_enum_to_string(addr_string))
@@ -97,6 +105,7 @@ pub fn parse_config() -> HelperErrorResult<Config> {
     let local_path = PathBuf::from(local_path_string);
 
     let raft_conf: RaftConfig = RaftConfig {
+        persist_path,
         listener_addr,
         connections,
     };
@@ -115,7 +124,6 @@ pub fn parse_config() -> HelperErrorResult<Config> {
 }
 
 fn from_yaml_hash<'a>(key: &'a str, yaml_content: &'a Yaml) -> Result<&'a Yaml, HelperErrors> {
-    // dbg!(yaml_content, key);
     match yaml_content {
         Yaml::Null => Err(HelperErrors::ParserYamlError),
         Yaml::Hash(val) => {
