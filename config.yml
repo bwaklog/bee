@@ -8,6 +8,6 @@ services:
     listiner_addr: "100.91.203.91:45235"
     connections:
         - "100.91.203.91:45235"
-        - "100.102.173.22:45235"
+        - "100.91.203.91:23523"
   store:
     local_path: "./store_local/"

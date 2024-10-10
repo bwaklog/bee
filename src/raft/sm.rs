@@ -10,4 +10,5 @@
 // Hence regardless of a node failing, the state machine should
 // remain intact per server.
 
+#[allow(dead_code)]
 pub struct StateMachine {}

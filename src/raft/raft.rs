@@ -4,8 +4,7 @@
     https://raft.github.io/raft.pdf
 */
 
-use std::path::PathBuf;
-use rand::{thread_rng, Rng};
+use conn::ConnectionLayer;
 
 use state::NodeState;
 
@@ -13,11 +12,14 @@ use crate::raft::*;
 use crate::utils::helpers;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Raft {
     state: NodeState,
     config: helpers::RaftConfig,
+    pub conn: ConnectionLayer,
 }
 
+#[allow(unused_mut, dead_code)]
 impl Raft {
     pub fn init(raft_config: helpers::RaftConfig) -> Raft {
         // idealy this should be based on a cli flag to read
@@ -25,8 +27,11 @@ impl Raft {
         let mut state = NodeState::init_state(raft_config.persist_path.clone());
         state.assert_state();
 
+        let mut conn = ConnectionLayer::init_layer(&raft_config.listener_addr);
+
         return Raft {
             state,
+            conn,
             config: raft_config,
         };
     }
@@ -49,10 +54,11 @@ impl Raft {
     }
 }
 
-mod raft_helpers {
-    use rand::{thread_rng, Rng};
+#[allow(dead_code)]
+pub mod raft_helpers {
+    use rand::Rng;
 
-    fn gen_rand_timeout() -> u32 {
+    pub fn gen_rand_timeout() -> u32 {
         let mut rng = rand::thread_rng();
         rng.gen_range(200..=500)
     }

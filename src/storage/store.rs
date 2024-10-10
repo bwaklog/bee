@@ -4,11 +4,10 @@
 // data serialization before writes to disk
 // and network communication
 //
-use crate::storage::kv;
-use rmp;
-use serde::{Deserialize, Serialize};
-
 use super::kv::Operation;
+use crate::storage::kv;
+use serde::{Deserialize, Serialize};
+// use rmp_serde;
 
 #[allow(dead_code)]
 pub struct MemKV {}
@@ -53,13 +52,15 @@ mod tests {
 
     use super::{Data, LogEntry};
 
+    // #[ignore = "testing rmp_serde"]
     #[test]
     fn serialize() {
         let entry = LogEntry::new_entry(Operation::SET, 2, Data::INT(2), 0);
-        let ser_entry = serde_json::to_string(&entry).unwrap();
-        let mut buff = Vec::new();
-        rmp::encode::write_str(&mut buff, &ser_entry).unwrap();
-        println!("serde: {}", ser_entry);
-        println!("msgpack: {:?}", buff);
+        let entry2 = LogEntry::new_entry(Operation::SET, 2, Data::INT(2), 0);
+        let mut logs = Vec::new();
+        logs.push(entry);
+        logs.push(entry2);
+        let bytes = rmp_serde::to_vec(&logs).unwrap();
+        println!("rmp_serde: {:?}", bytes);
     }
 }

@@ -13,8 +13,10 @@ struct Args {
 }
 
 use storage::*;
+use raft::rpc::*;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let config = utils::helpers::parse_config(PathBuf::from(args.conf_path)).unwrap();
@@ -22,8 +24,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // compile prtobuf files
 
+    println!("\nInitializing raft layer:");
     let raft = Raft::init(config.raft.clone());
-    // dbg!(&raft);
+
+    let ping = raft.conn.ping("ping".to_string()).await?;
+
+    println!("{ping}");
+
+
 
     Ok(())
 }

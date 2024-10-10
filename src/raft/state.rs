@@ -28,7 +28,7 @@ enum State {
 pub type RaftStateError<T> = Result<T, StateErrors>;
 
 #[derive(Debug)]
-enum StateErrors {
+pub enum StateErrors {
     LoadPersistedStateError(io::Error),
     SerializationError(serde_json::Error),
     MsgPackWriteError(rmp::encode::ValueWriteError),
@@ -115,14 +115,11 @@ impl NodeState {
     }
 
     pub fn persist_state(&mut self, state_path: PathBuf) -> RaftStateError<()> {
-        // FIX: Vec<LogEntry> does not implement copy trait
         let persisted_state_json: (NodeTerm, Option<NodeId>, Vec<store::LogEntry>) =
             (self.current_term, self.voted_for, self.log.clone());
-        let state_serialised = serde_json::to_string(&persisted_state_json)?;
+        let state_serialised = serde_json::to_vec(&persisted_state_json)?;
         let mut state_file = File::open(state_path.as_path())?;
-        let mut buff: Vec<u8> = Vec::new();
-        rmp::encode::write_str(&mut buff, &state_serialised)?;
-        state_file.write(&buff)?;
+        state_file.write_all(&state_serialised)?;
         Ok(())
     }
 
