@@ -30,6 +30,7 @@ pub struct LogEntry {
 
 impl LogEntry {
     // test functions
+    #[allow(unused)]
     pub fn new_entry(operation: Operation, key: u32, data: Data, term: u32) -> LogEntry {
         return LogEntry {
             operation,

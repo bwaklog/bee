@@ -1,18 +1,16 @@
 // A serer will show 3 primary states of
 // - follower, candidate and Leader.
 
-use core::fmt;
 use rmp;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use std::fmt::write;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Display, PathBuf};
+use std::path::PathBuf;
 use std::{io, sync};
 
 use crate::store::{self, LogEntry};
-use crate::utils::helpers::{self, RaftConfig};
+use crate::utils::helpers::{self};
 
 pub type NodeTerm = u32;
 pub type NodeId = u32;
@@ -27,6 +25,7 @@ enum State {
 
 pub type RaftStateError<T> = Result<T, StateErrors>;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum StateErrors {
     LoadPersistedStateError(io::Error),
@@ -94,6 +93,7 @@ impl NodeState {
     // not descriptive enough
     // recovers -> currentTerm, NodeId votedFor and the Log of entries
     // pub fn recover_state() -> Option<(NodeTerm, NodeId, Vec<store::LogEntry>)> {
+    #[allow(unused_variables)]
     pub fn recover_state(
         state_path: PathBuf,
     ) -> RaftStateError<(NodeTerm, NodeId, Vec<store::LogEntry>)> {
@@ -114,6 +114,7 @@ impl NodeState {
         assert_eq!(self.ack_length.len(), 0);
     }
 
+    #[allow(unused)]
     pub fn persist_state(&mut self, state_path: PathBuf) -> RaftStateError<()> {
         let persisted_state_json: (NodeTerm, Option<NodeId>, Vec<store::LogEntry>) =
             (self.current_term, self.voted_for, self.log.clone());
@@ -123,6 +124,7 @@ impl NodeState {
         Ok(())
     }
 
+    #[allow(unused)]
     pub fn start_election(&mut self) {
         if self.node_state != State::FOLLOWER {
             return;
@@ -176,6 +178,7 @@ impl NodeState {
         };
     }
 
+    #[allow(unused)]
     pub fn get_state(&mut self, mu: sync::Mutex<&mut NodeState>) -> Option<(NodeTerm, bool)> {
         let lock = mu.lock();
         match lock {

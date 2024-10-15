@@ -22,7 +22,6 @@ temp/
 # not here for Git-LFS
 re.db
 
-
 # Added by cargo
 
 /target

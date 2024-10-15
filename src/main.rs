@@ -5,6 +5,7 @@ mod utils;
 use clap::Parser;
 use raft::raft::Raft;
 use std::{error::Error, path::PathBuf};
+use tokio::signal;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -12,8 +13,8 @@ struct Args {
     conf_path: String,
 }
 
-use storage::*;
 use raft::rpc::*;
+use storage::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -25,13 +26,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // compile prtobuf files
 
     println!("\nInitializing raft layer:");
-    let raft = Raft::init(config.raft.clone());
+    let mut raft: Raft = Raft::init(config.raft.clone());
 
-    let ping = raft.conn.ping("ping".to_string()).await?;
+    // starting the raft daemon
+    raft.node_daemon();
 
-    println!("{ping}");
 
+    println!(
+        "[MAIN] Finished initializing raft client: {}",
+        config.node_name
+    );
 
+    // tokio::spawn(async move { raft_node.heart_beats().await });
+    // raft_node.heart_beats().await;
+
+    // raft_node.heart_beats().await;
+
+    match signal::ctrl_c().await {
+        Ok(()) => {}
+        Err(e) => eprintln!("Unable to listen for shutdown: {:?}", e),
+    }
 
     Ok(())
 }

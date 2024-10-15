@@ -43,6 +43,7 @@ impl From<std::io::Error> for HelperErrors {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct RaftConfig {
     pub persist_path: PathBuf,
@@ -50,11 +51,13 @@ pub struct RaftConfig {
     pub connections: Vec<SocketAddr>,
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct StoreConfig {
     pub local_path: PathBuf,
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Config {
     pub node_name: String,
