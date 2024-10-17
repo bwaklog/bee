@@ -5,7 +5,7 @@
 */
 
 use core::time;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use raft::conn::ConnectionLayer;
@@ -14,7 +14,7 @@ use rpc::RaftClient;
 use state::NodeState;
 use tarpc::tokio_serde::formats::Json;
 use tarpc::{client, context};
-use tokio::sync::oneshot::{self};
+use tokio::sync::{self, mpsc};
 
 use crate::raft::*;
 use crate::utils::helpers;
@@ -38,49 +38,65 @@ impl Raft {
         //   or a follower
         // -
 
-        let timeout_clone = Arc::new(&self.timeout);
-        let listener_addr = Arc::new(&self.config.listener_addr);
-        let (timeout_tx, timeout_rx) = tokio::sync::oneshot::channel();
-        let (connlayer_tx, connlayer_rx) = tokio::sync::oneshot::channel();
+        let (mut timeout_tx, mut timeout_rx) = tokio::sync::mpsc::channel(128);
+        let (mut connlayer_tx, mut connlayer_rx): (
+            sync::mpsc::Sender<ConnectionLayer>,
+            sync::mpsc::Receiver<ConnectionLayer>,
+        ) = tokio::sync::mpsc::channel(128);
 
         // NOTE:
         // Starting a TcpListiner on the node
         //
         // A follower will be waiting
 
+        let timeout = Arc::new(Mutex::new(self.timeout));
+        let addr = Arc::new(Mutex::new(self.config.listener_addr));
+
+        let addr_mutex = addr.clone();
         // NOTE: RPC Listene
         tokio::spawn(async move {
-            let addr = Arc::into_inner(Arc::clone(&listener_addr)).unwrap().clone();
-            let mut conn = ConnectionLayer::init_layer(&addr)
+            let node_addr = addr_mutex.lock().unwrap().clone();
+            let mut conn = ConnectionLayer::init_layer(&node_addr)
                 .await
                 .expect("couldnt initalize a Raft Service");
-            connlayer_tx.send(conn).unwrap();
+            connlayer_tx.send(conn).await.unwrap();
         });
 
+        let timeout_mutex = timeout.clone();
 
         // NOTE: timeout service
         tokio::spawn(async move {
-            let timeout = Arc::into_inner(Arc::clone(&timeout_clone)).unwrap().clone();
-            let tx: Arc<oneshot::Sender<String>> = Arc::new(timeout_tx);
+            let tx: Arc<mpsc::Sender<String>> = Arc::new(timeout_tx);
+            let rpc_timeout = timeout_mutex.lock().unwrap().clone();
             loop {
+                tokio::time::sleep(time::Duration::from_millis(rpc_timeout)).await;
                 let txclone = Arc::clone(&tx);
                 let _transmitter = Arc::into_inner(txclone);
                 // transmitter.send("timeout".to_owned()).unwrap();
-                println!("[TIMER SERVICE] Timeout {}!", timeout);
+                println!("[TIMER SERVICE] Timeout {}!", rpc_timeout);
             }
         });
 
         // second block
 
-        tokio::select! {
-            val = timeout_rx => {
-                println!("Timeout for rpc: {:?}", val);
-            }
-            val = connlayer_rx => {
-                println!("{:?}", val);
+        loop {
+            tokio::select! {
+                Some(timeout_msg) = timeout_rx.recv() => {
+                    println!("{timeout_msg}");
+                }
+                Some(conn) = connlayer_rx.recv() => {
+                    dbg!(&conn);
+                }
             }
         }
-
+        // tokio::select! {
+        //     val = timeout_rx => {
+        //         println!("Timeout for rpc: {:?}", val);
+        //     }
+        //     val = connlayer_rx => {
+        //         println!("{:?}", val);
+        //     }
+        // }
     }
 
     pub fn init(raft_config: helpers::RaftConfig) -> Raft {
