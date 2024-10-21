@@ -1,10 +1,9 @@
 name: Rust project benchmark
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_run:
+    branches: ["main"]
+
 
 env:
   CARGO_TERM_COLOR: always

@@ -1,5 +1,5 @@
-use std::io;
 use std::future;
+use std::io;
 //
 // TCP layer for underlying consensus library
 //
@@ -7,19 +7,21 @@ use std::future;
 // OCT 11th - tarpc :3
 //
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
-use tarpc::server::incoming::Incoming;
-use tarpc::server::Channel;
-use tarpc::server::{self};
-use tokio;
-use tarpc::{client, context};
-
+use tarpc::client;
+use tarpc::context;
+use tarpc::server::{self, incoming::Incoming, Channel};
 use tarpc::tokio_serde::formats::Json;
-
-use crate::{RaftClient, RaftServer};
+use tokio;
 
 use super::rpc::Raft;
+use super::state::NodeState;
+use crate::LeaderElectionRequest;
+use crate::LeaderElectionResponse;
+use crate::RaftClient;
+use crate::RaftServer;
 
 type ConnErrResult<T> = Result<T, ConnErrors>;
 
@@ -54,7 +56,10 @@ pub struct ConnectionLayer {
 
 #[allow(unused)]
 impl ConnectionLayer {
-    pub async fn init_layer(addr: &SocketAddr) -> ConnErrResult<ConnectionLayer> {
+    pub async fn init_layer(
+        addr: &SocketAddr,
+        node_state: Arc<Mutex<NodeState>>,
+    ) -> ConnErrResult<ConnectionLayer> {
         println!("[RAFT][INIT_LAYER] Starting tcp listening layer");
 
         let mut listener = tarpc::serde_transport::tcp::listen(addr, Json::default).await?;
@@ -67,14 +72,18 @@ impl ConnectionLayer {
         //   // listen on condition
         // }
 
-        tokio::spawn(async {
+        dbg!("node state in timeout service {:#?}", &node_state);
+
+        let state_clone = node_state.clone();
+
+        tokio::spawn(async move {
             listener
                 .filter_map(|r| future::ready(r.ok()))
                 .map(server::BaseChannel::with_defaults)
                 .max_channels_per_key(1, |t| t.transport().peer_addr().unwrap().ip())
                 .map(|channel| {
-                    println!("[RAFT][LISTINER] something happened!");
-                    let server = RaftServer;
+                    let state = Arc::clone(&state_clone);
+                    let server = RaftServer { node_state: state };
                     channel.execute(server.serve())
                 })
                 .buffer_unordered(10)
@@ -87,18 +96,30 @@ impl ConnectionLayer {
         })
     }
 
-    pub async fn ping(addr: &SocketAddr, ping: String) -> ConnErrResult<String> {
-        // println!("[RAFT][CLIENT] Sending ping to {addr}");
-
-        let mut transport = tarpc::serde_transport::tcp::connect(addr, Json::default);
+    pub async fn request_vote_shim(
+        sock_addr: SocketAddr,
+        request: LeaderElectionRequest,
+    ) -> Option<LeaderElectionResponse> {
+        let mut transport = tarpc::serde_transport::tcp::connect(sock_addr, Json::default);
         transport.config_mut().max_frame_length(usize::MAX);
 
-        let raft_client = RaftClient::new(client::Config::default(), transport.await?).spawn();
-        println!("Connection with {addr}");
+        match transport.await {
+            Ok(trans) => {
+                let client = RaftClient::new(client::Config::default(), trans).spawn();
 
-        let resp = raft_client.ping(context::current(), ping).await?;
-        println!("{resp}");
+                let vote_request_response = client
+                    .leader_election(context::current(), request)
+                    .await
+                    .expect(&format!(
+                        "Failed to send leader_election RPC to {}",
+                        sock_addr
+                    ));
 
-        Ok(resp)
+                return Some(vote_request_response);
+            }
+            Err(_) => {
+                return None;
+            }
+        }
     }
 }

@@ -8,9 +8,9 @@ Node starup tasks
     │
   recover from persisted state
     │
-    |
+    │
   starting node manager daemon
-    |
+    │
     ├──── listener
     │
     ├──── server for KV

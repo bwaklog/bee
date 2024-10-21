@@ -11,6 +11,10 @@ rmp-serde = "1.3.0"
 rand = "0.8.5"
 yaml-rust2 = "0.9.0"
 clap = { version = "4.5.18", features = ["derive"] }
+
+# Tracing & Logging
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["std", "chrono", "fmt"] }
 log = "0.4.22"
 
 # RPC's

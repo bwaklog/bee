@@ -20,12 +20,12 @@ pub enum Data {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
-    operation: kv::Operation,
-    term: u32,
+    pub operation: kv::Operation,
+    pub term: u32,
     // need not be a u32, but
     // im neglecting this for now
-    key: u32,
-    data: Data,
+    pub key: u32,
+    pub data: Data,
 }
 
 impl LogEntry {

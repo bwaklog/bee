@@ -5,18 +5,19 @@ use rmp;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs::File;
+use std::io;
 use std::io::Write;
 use std::path::PathBuf;
-use std::{io, sync};
 
+use crate::raft::state::state_helpers::gen_rand_id;
 use crate::store::{self, LogEntry};
 use crate::utils::helpers::{self};
 
-pub type NodeTerm = u32;
-pub type NodeId = u32;
-pub type LogIndex = u32;
+pub type NodeTerm = u64;
+pub type NodeId = u64;
+pub type LogIndex = usize;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
 enum State {
     FOLLOWER,
     CANDIDATE,
@@ -58,13 +59,15 @@ impl From<helpers::HelperErrors> for StateErrors {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NodeState {
+    pub node_id: u64,
+
     // have a mutex lock over the NodeState
     // while modifying these values
-    current_term: NodeTerm,
-    voted_for: Option<NodeId>,
-    log: Vec<store::LogEntry>,
+    pub current_term: NodeTerm,
+    pub voted_for: Option<NodeId>,
+    pub log: Vec<store::LogEntry>,
 
     node_state: State,
     //
@@ -131,8 +134,6 @@ impl NodeState {
         }
         self.node_state = State::CANDIDATE;
         self.current_term += 1;
-
-        // start election timer
     }
 
     // initialization of a node
@@ -165,6 +166,7 @@ impl NodeState {
 
         // NOTE: my god too many vecs (allocations!)
         return NodeState {
+            node_id: gen_rand_id(),
             current_term: node_term,
             voted_for,
             node_state: State::FOLLOWER,
@@ -179,19 +181,20 @@ impl NodeState {
     }
 
     #[allow(unused)]
-    pub fn get_state(&mut self, mu: sync::Mutex<&mut NodeState>) -> Option<(NodeTerm, bool)> {
-        let lock = mu.lock();
-        match lock {
-            Ok(guard) => {
-                let node_term = guard.current_term;
-                let is_leader: bool = guard.node_state == State::LEADER;
-                return Some((node_term, is_leader));
-            }
-            Err(err) => {
-                println!("Failed to get lock: {err}");
-                return None;
-            }
-        }
+    // return type -> NodeTerm, isLeader
+    pub fn get_state(&self) -> Option<(NodeTerm, bool)> {
+        let node_term = self.current_term;
+        let is_leader: bool = self.node_state == State::LEADER;
+        return Some((node_term, is_leader));
+    }
+}
+
+pub mod state_helpers {
+    use rand::Rng;
+    pub fn gen_rand_id() -> u64 {
+        let mut rng = rand::thread_rng();
+        let val = rng.gen_range(1..1000);
+        val
     }
 }
 

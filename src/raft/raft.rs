@@ -5,10 +5,12 @@
 */
 
 use core::time;
+use std::borrow::Borrow;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 use raft::conn::ConnectionLayer;
+use raft::state::NodeId;
 use raft_helpers::gen_rand_timeout;
 use rpc::RaftClient;
 use state::NodeState;
@@ -28,7 +30,7 @@ pub struct Raft {
     // pub conn: ConnectionLayer,
 }
 
-#[allow(unused_mut, dead_code)]
+#[allow(unused, dead_code)]
 impl Raft {
     pub async fn node_daemon(&mut self) {
         // this is an asynchronous program running in the background
@@ -44,59 +46,72 @@ impl Raft {
             sync::mpsc::Receiver<ConnectionLayer>,
         ) = tokio::sync::mpsc::channel(128);
 
-        // NOTE:
-        // Starting a TcpListiner on the node
-        //
-        // A follower will be waiting
-
         let timeout = Arc::new(Mutex::new(self.timeout));
-        let addr = Arc::new(Mutex::new(self.config.listener_addr));
+        let addr = Arc::new(Mutex::new(self.config.clone().listener_addr));
+        let conn_sock_addrs = Arc::new(self.config.clone().connections);
+
+        let node_state = Arc::new(Mutex::new(self.state.clone()));
 
         let addr_mutex = addr.clone();
-        // NOTE: RPC Listene
+
+        let state_clone = node_state.clone();
+
+        // NOTE: RPC Listener
         tokio::spawn(async move {
             let node_addr = addr_mutex.lock().unwrap().clone();
-            let mut conn = ConnectionLayer::init_layer(&node_addr)
+            let state = Arc::clone(&state_clone);
+            let mut conn = ConnectionLayer::init_layer(&node_addr, state)
                 .await
                 .expect("couldnt initalize a Raft Service");
             connlayer_tx.send(conn).await.unwrap();
         });
 
         let timeout_mutex = timeout.clone();
+        let connections = conn_sock_addrs.clone();
+        let state_clone = node_state.clone();
 
         // NOTE: timeout service
+        // This spawned
         tokio::spawn(async move {
             let tx: Arc<mpsc::Sender<String>> = Arc::new(timeout_tx);
             let rpc_timeout = timeout_mutex.lock().unwrap().clone();
+            let state = Arc::clone(&state_clone);
+
             loop {
-                tokio::time::sleep(time::Duration::from_millis(rpc_timeout)).await;
+                tokio::time::sleep(time::Duration::from_secs(rpc_timeout)).await;
                 let txclone = Arc::clone(&tx);
-                let _transmitter = Arc::into_inner(txclone);
-                // transmitter.send("timeout".to_owned()).unwrap();
-                println!("[TIMER SERVICE] Timeout {}!", rpc_timeout);
+
+                let socket_addrs: &Vec<SocketAddr> = connections.borrow();
+                for addr in socket_addrs {
+                    let mut transport = tarpc::serde_transport::tcp::connect(addr, Json::default);
+                    transport.config_mut().max_frame_length(usize::MAX);
+
+                    match transport.await {
+                        Ok(transp) => {
+                            let client = RaftClient::new(client::Config::default(), transp).spawn();
+                            let cur_state = state.lock().unwrap().clone();
+                            let resp: (String, NodeId) = client
+                                .ping(context::current(), cur_state.node_id, "ping".to_owned())
+                                .await
+                                .unwrap_or(("failed".to_owned(), 0));
+                            println!("[ Node {} ] Response from {}: {}", resp.1, addr, resp.0);
+                        }
+                        Err(_) => {}
+                    }
+                }
             }
         });
 
-        // second block
-
         loop {
             tokio::select! {
-                Some(timeout_msg) = timeout_rx.recv() => {
-                    println!("{timeout_msg}");
+                Some(_timeout_msg) = timeout_rx.recv() => {
+                    // info!("{timeout_msg}");
                 }
-                Some(conn) = connlayer_rx.recv() => {
-                    dbg!(&conn);
+                Some(_conn) = connlayer_rx.recv() => {
+                    // info!(connection = %conn);
                 }
             }
         }
-        // tokio::select! {
-        //     val = timeout_rx => {
-        //         println!("Timeout for rpc: {:?}", val);
-        //     }
-        //     val = connlayer_rx => {
-        //         println!("{:?}", val);
-        //     }
-        // }
     }
 
     pub fn init(raft_config: helpers::RaftConfig) -> Raft {
@@ -116,40 +131,34 @@ impl Raft {
         };
     }
 
-    pub async fn heart_beats(&mut self) {
-        // Abstraction over connection to send
-        // heartbeats to its connections
+    pub async fn start_leader_election(
+        connections: Arc<Vec<SocketAddr>>,
+        state: Arc<Mutex<NodeState>>,
+    ) -> bool {
+        let votes_recieved: Vec<NodeId> = Vec::with_capacity(2);
 
-        // select some rand timeout interaval
+        for conn in connections.as_ref() {
 
-        let timeout = gen_rand_timeout();
-        println!("timeout: {timeout:?}");
+            let binding = state.lock();
+            let cur_state = binding.as_ref().unwrap();
 
-        let connections = self.config.clone().connections;
-
-        loop {
-            for conn in &connections {
-                let mut transport = tarpc::serde_transport::tcp::connect(conn, Json::default);
-                transport.config_mut().max_frame_length(usize::MAX);
-                let transport_unwraped = transport.await;
-                println!("transport");
-                match transport_unwraped {
-                    Ok(trans) => {
-                        let raft_client = RaftClient::new(client::Config::default(), trans).spawn();
-                        println!("Connection with {conn}");
-
-                        let resp = raft_client
-                            .ping(context::current(), "ping".to_owned())
-                            .await
-                            .unwrap();
-                        println!("{resp}");
-                    }
-                    Err(_) => {}
-                }
-            }
-
-            thread::sleep(time::Duration::from_secs(timeout));
+            let vote_request_response = ConnectionLayer::request_vote_shim(
+                conn.to_owned(),
+                rpc::LeaderElectionRequest {
+                    term: cur_state.current_term.clone(),
+                    candidate_id: cur_state.node_id.clone(),
+                    last_log_index: cur_state.log.len() - 1,
+                    last_log_term: cur_state
+                        .log
+                        .get(cur_state.log.len() - 1 as usize)
+                        .unwrap()
+                        .term as u64,
+                    node_id: cur_state.node_id,
+                },
+            )
+            .await;
         }
+        false
     }
 
     pub fn listen_leader() {
@@ -167,11 +176,10 @@ impl Raft {
 #[allow(dead_code)]
 pub mod raft_helpers {
     use rand::Rng;
-
     pub fn gen_rand_timeout() -> u64 {
         let mut rng = rand::thread_rng();
-        let val: u64 = rng.gen_range(200..=500);
-        // let val: u64 = rng.gen_range(2..3);
+        // let val: u64 = rng.gen_range(200..=500);
+        let val: u64 = rng.gen_range(2..4);
         val
     }
 }
