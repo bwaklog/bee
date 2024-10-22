@@ -17,6 +17,7 @@ use tarpc::tokio_serde::formats::Json;
 use tokio;
 
 use super::rpc::Raft;
+use super::state::NodeId;
 use super::state::NodeState;
 use crate::LeaderElectionRequest;
 use crate::LeaderElectionResponse;
@@ -96,7 +97,63 @@ impl ConnectionLayer {
         })
     }
 
-    pub async fn request_vote_shim(
+    pub async fn ping_node_wrapper(
+        sock_addr: SocketAddr,
+        request: String,
+        node_state: Arc<Mutex<NodeState>>,
+    ) -> Option<(String, NodeId)> {
+        let mut transport = tarpc::serde_transport::tcp::connect(sock_addr, Json::default);
+        transport.config_mut().max_frame_length(usize::MAX);
+
+        ///
+        /// let handle = node_state.lock(); <-- this is a MutexGuard{{error}, NodeState}
+        ///                                     and this does not a `Send`
+        ///
+        /// // while having this lock i try accessing the node_id from this MutexGuard
+        /// let node_id: u64 = handle.node_id;
+        ///
+        /// // while having a lock we await on the tcp transporter
+        /// match transport.await {
+        ///                 ^^^^^
+        ///                 why is this a problem now?
+        ///
+        /// Consider a thread where the current function is being executed
+        /// where we have a lock
+        ///     T1 -----[LOCK]-----[AWAIT] ----------
+        ///                        ^^^^^^
+        ///                 here an await is
+        ///                 called while we have a lock
+        ///
+        ///     tokio handles how it resumens execution, after the future
+        ///     is done executing, this could be on _another thread_?
+        ///
+        ///     T1 ----[LOCK]----[AWAIT] ---------
+        ///               |
+        ///     T2        |              ----[LOCK]----
+        ///               |
+        ///               ---------------------|
+        ///                 transfering locked
+        ///                mutex across threads
+        /// }
+        ///
+
+        let node_id = node_state.lock().unwrap().node_id;
+
+        match transport.await {
+            Ok(trans) => {
+                let client = RaftClient::new(client::Config::default(), trans).spawn();
+                let resp = client
+                    .ping(context::current(), node_id, request)
+                    .await
+                    .expect(&format!("Failed to send ping rpc to {}", sock_addr));
+                return Some(resp);
+            }
+            Err(_) => {}
+        }
+        None
+    }
+
+    pub async fn request_vote_wrapper(
         sock_addr: SocketAddr,
         request: LeaderElectionRequest,
     ) -> Option<LeaderElectionResponse> {
