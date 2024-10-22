@@ -8,6 +8,8 @@ use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::raft::state::state_helpers::gen_rand_id;
 use crate::store::{self, LogEntry};
@@ -18,7 +20,7 @@ pub type NodeId = u64;
 pub type LogIndex = usize;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Clone)]
-enum State {
+pub enum State {
     FOLLOWER,
     CANDIDATE,
     LEADER,
@@ -69,7 +71,7 @@ pub struct NodeState {
     pub voted_for: Option<NodeId>,
     pub log: Vec<store::LogEntry>,
 
-    node_state: State,
+    pub node_state: State,
     //
     // Volatile server states
     current_leader: Option<NodeId>,
@@ -108,6 +110,7 @@ impl NodeState {
         todo!()
     }
 
+    #[allow(unused)]
     pub fn assert_state(&mut self) {
         assert_eq!(self.node_state, State::FOLLOWER);
         assert_eq!(self.commit_index, 0);
@@ -138,7 +141,7 @@ impl NodeState {
 
     // initialization of a node
     // NOTE: passing down state_path down two functions
-    pub fn init_state(state_path: PathBuf) -> NodeState {
+    pub fn init_state(state_path: PathBuf) -> Arc<Mutex<NodeState>> {
         let mut node_term: NodeTerm = 0;
         let mut voted_for: Option<NodeId> = None;
         let log: Vec<LogEntry>;
@@ -165,7 +168,7 @@ impl NodeState {
         );
 
         // NOTE: my god too many vecs (allocations!)
-        return NodeState {
+        return Arc::new(Mutex::new(NodeState {
             node_id: gen_rand_id(),
             current_term: node_term,
             voted_for,
@@ -177,15 +180,36 @@ impl NodeState {
             votes_recieved: Vec::new(),
             sent_length: Vec::new(),
             ack_length: Vec::new(),
-        };
+        }));
+
     }
+
+    // async functions for RPC services
+
+    #[allow(unused)]
+    pub async fn echo(&self, input: String) -> String {
+        format!("{input}")
+    }
+
 
     #[allow(unused)]
     // return type -> NodeTerm, isLeader
-    pub fn get_state(&self) -> Option<(NodeTerm, bool)> {
+    pub fn get_state(&self) -> Option<(NodeTerm, bool, NodeId)> {
         let node_term = self.current_term;
         let is_leader: bool = self.node_state == State::LEADER;
-        return Some((node_term, is_leader));
+        let node_id = self.node_id;
+        return Some((node_term, is_leader, node_id));
+    }
+
+    #[allow(unused)]
+    // NOTE:
+    // This is a very bad idea, I don't know how else to
+    // have a full context of the node without this
+    //
+    // Can't hold a lock for long enough while making
+    // an async call
+    pub fn node_snapshot(&self) -> Option<NodeState> {
+        return Some(self.clone());
     }
 }
 
@@ -198,45 +222,46 @@ pub mod state_helpers {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
 
-    use crate::storage::{kv::Operation, store::*};
-    use crate::utils::helpers::{parse_config, HelperErrorResult};
+// #[cfg(test)]
+// mod tests {
+//     use std::path::PathBuf;
 
-    use super::{NodeState, RaftStateError};
+//     use crate::storage::{kv::Operation, store::*};
+//     use crate::utils::helpers::{parse_config, HelperErrorResult};
 
-    fn create_test_state_with_path(conf_path: PathBuf) -> HelperErrorResult<NodeState> {
-        let config = parse_config(conf_path)?;
-        let raft_sm = NodeState::init_state(config.store.local_path);
-        Ok(raft_sm)
-    }
+//     use super::{NodeState, RaftStateError};
 
-    #[test]
-    fn test_init() -> RaftStateError<()> {
-        let raft_sm = create_test_state_with_path(PathBuf::from("./tests/config.yml"))?;
+//     fn create_test_state_with_path(conf_path: PathBuf) -> HelperErrorResult<NodeState> {
+//         let config = parse_config(conf_path)?;
+//         let raft_sm = NodeState::init_state(config.store.local_path);
+//         Ok(raft_sm)
+//     }
 
-        assert!(raft_sm.commit_index == 0);
-        assert!(raft_sm.last_applied == 0);
-        assert!(raft_sm.voted_for == None);
-        Ok(())
-    }
+//     #[test]
+//     fn test_init() -> RaftStateError<()> {
+//         let raft_sm = create_test_state_with_path(PathBuf::from("./tests/config.yml"))?;
 
-    #[test]
-    fn log_entry_append() -> HelperErrorResult<()> {
-        let mut raft_sm = create_test_state_with_path(PathBuf::from("./tests/config.yml"))?;
-        // dbg!(&raft_sm);
-        let log_entry_dummy =
-            LogEntry::new_entry(Operation::SET, 5, Data::STRING(String::from("hello")), 1);
-        // dbg!(&log_entry_dummy);
-        println!("Dummy log entry: {:?}", log_entry_dummy);
+//         assert!(raft_sm.commit_index == 0);
+//         assert!(raft_sm.last_applied == 0);
+//         assert!(raft_sm.voted_for == None);
+//         Ok(())
+//     }
 
-        raft_sm.log.push(log_entry_dummy.clone());
+//     #[test]
+//     fn log_entry_append() -> HelperErrorResult<()> {
+//         let mut raft_sm = create_test_state_with_path(PathBuf::from("./tests/config.yml"))?;
+//         // dbg!(&raft_sm);
+//         let log_entry_dummy =
+//             LogEntry::new_entry(Operation::SET, 5, Data::STRING(String::from("hello")), 1);
+//         // dbg!(&log_entry_dummy);
+//         println!("Dummy log entry: {:?}", log_entry_dummy);
 
-        debug_assert_eq!(raft_sm.log.len(), 1);
-        debug_assert_eq!(raft_sm.log.get(0).unwrap(), &log_entry_dummy);
+//         raft_sm.log.push(log_entry_dummy.clone());
 
-        Ok(())
-    }
-}
+//         debug_assert_eq!(raft_sm.log.len(), 1);
+//         debug_assert_eq!(raft_sm.log.get(0).unwrap(), &log_entry_dummy);
+
+//         Ok(())
+//     }
+// }

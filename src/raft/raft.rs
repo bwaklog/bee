@@ -1,28 +1,26 @@
-/*
-    Reference:
-    In search of an understandable consensus algorithm
-    https://raft.github.io/raft.pdf
-*/
+//
+// Reference:
+// In search of an understandable consensus algorithm
+// https://raft.github.io/raft.pdf
+//
 
 use core::time;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::raft::state::NodeState;
 use raft::conn::ConnectionLayer;
 use raft::state::NodeId;
 use raft_helpers::gen_rand_timeout;
-use tokio::sync::{self};
+use tokio::sync::{self, Mutex};
 
 use crate::raft;
 use crate::utils::helpers;
 
-use super::rpc;
-
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Raft {
-    state: NodeState,
+    state: Arc<Mutex<NodeState>>,
     config: helpers::RaftConfig,
     timeout: u64,
     // pub conn: ConnectionLayer,
@@ -36,7 +34,6 @@ impl Raft {
         // - timeouts (election & follower)
         // - waiting as a listener on RPC calls from a leader
         //   or a follower
-        // -
 
         let (mut timeout_tx, mut timeout_rx): (
             sync::mpsc::Sender<String>,
@@ -48,18 +45,20 @@ impl Raft {
         ) = tokio::sync::mpsc::channel(128);
 
         let timeout = Arc::new(self.timeout);
+        let timeout_tx_arc = Arc::new(timeout_tx);
         let addr = Arc::new(Mutex::new(self.config.clone().listener_addr));
         let conn_sock_addrs = Arc::new(self.config.clone().connections);
 
-        let node_state = Arc::new(Mutex::new(self.state.clone()));
+        // FIX
+        let node_state = Arc::clone(&self.state);
 
         let addr_mutex = addr.clone();
 
-        let state_clone = node_state.clone();
+        let state_clone = Arc::clone(&node_state);
 
         // NOTE: RPC Listener
         tokio::spawn(async move {
-            let node_addr = addr_mutex.lock().unwrap().clone();
+            let node_addr = addr_mutex.lock().await;
             let state = Arc::clone(&state_clone);
             let mut conn = ConnectionLayer::init_layer(&node_addr, state)
                 .await
@@ -67,39 +66,59 @@ impl Raft {
             connlayer_tx.send(conn).await.unwrap();
         });
 
-        let timeout_mutex = timeout.clone();
         let connections = conn_sock_addrs.clone();
-        let state_clone = node_state.clone();
+        let state_clone = Arc::clone(&node_state);
 
         tokio::spawn(async move {
-            let rpc_timeout = timeout_mutex.clone();
+            let tx = Arc::clone(&timeout_tx_arc);
+            let rpc_timeout = timeout.clone();
             let state = Arc::clone(&state_clone);
-            let node_id: u64 = state.lock().unwrap().node_id;
+            let node_id: u64 = state.lock().await.node_id;
 
             loop {
-                tokio::time::sleep(time::Duration::from_secs(rpc_timeout.as_ref().to_owned())).await;
-                let socket_addrs: Vec<SocketAddr> = connections.as_ref().to_owned();
-                for addr in socket_addrs.iter() {
-                    println!("[ Node {} ] Sending ping to {}", node_id, addr);
-                    if let Some(resp) = ConnectionLayer::ping_node_wrapper(
-                        addr.to_owned(),
-                        "ping".to_owned(),
-                        Arc::clone(&state)
-                    ).await {
-                        println!("[ Node {} ] Response from [ Node {} ]{}: {}", node_id, resp.1, addr, resp.0);
-                    }
-                }
-            }
+                tokio::time::sleep(time::Duration::from_secs(rpc_timeout.as_ref().to_owned()))
+                    .await;
 
+                Raft::ping_nodes(Arc::clone(&connections), Arc::clone(&state)).await;
+
+                tx.send("heartbeat timeout".to_owned()).await.unwrap();
+                // let cur_state = state.lock().await.node_snapshot().unwrap();
+
+                // let client_addresses = connections.clone().as_ref().clone();
+
+                // for addr in client_addresses.iter() {
+                //     println!("[ Node {} ] Sending ping to {}", cur_state.node_id, addr);
+                //     if let Some(resp) = ConnectionLayer::ping_node_wrapper(
+                //         addr.to_owned(),
+                //         format!("ping"),
+                //         node_id,
+                //     )
+                //     .await {
+                //         println!("[ Node {} ] Response from {}: {}", node_id, resp.1, resp.0);
+                //     }
+                // }
+
+                // if cur_state.node_state == State::FOLLOWER {
+                //     // Node is a follower
+                //     // start election
+                //     println!(
+                //         "[ Node {} ] Initiating a Leader Election.",
+                //         cur_state.node_id
+                //     );
+                //     Raft::start_leader_election(Arc::clone(&connections), Arc::clone(&state_clone));
+                // } else {
+                //     Raft::ping_nodes(Arc::clone(&conn_sock_addrs), Arc::clone(&state_clone)).await;
+                // }
+            }
         });
 
         loop {
             tokio::select! {
-                Some(_timeout_msg) = timeout_rx.recv() => {
-                    // info!("{timeout_msg}");
+                Some(timeout_msg) = timeout_rx.recv() => {
+                    println!("heartbeat wait timeout: {timeout_msg}");
                 }
-                Some(_conn) = connlayer_rx.recv() => {
-                    // info!(connection = %conn);
+                Some(conn) = connlayer_rx.recv() => {
+                    println!("{:?}", conn);
                 }
             }
         }
@@ -113,7 +132,7 @@ impl Raft {
         println!("[RAFT] recovered/initialized raft state!");
 
         let timeout = gen_rand_timeout();
-        state.assert_state();
+        // state.assert_state();
 
         return Raft {
             config: raft_config,
@@ -122,34 +141,66 @@ impl Raft {
         };
     }
 
+    pub async fn ping_nodes(
+        connections: Arc<Vec<SocketAddr>>,
+        state: Arc<Mutex<NodeState>>,
+    ) -> bool {
+        for conn in connections.iter() {
+            let node_state = state.lock().await;
+            println!("[ Node {} ] Sending ping to {}", node_state.node_id, conn);
+            if let Some(resp) = ConnectionLayer::ping_node_wrapper(
+                conn.to_owned(),
+                format!("ping"),
+                node_state.node_id,
+            )
+            .await
+            {
+                println!(
+                    "[ Node {} ] Response from {}: {}",
+                    node_state.node_id, conn, resp.0
+                );
+            } else {
+                println!(
+                    "[ Node {} ] Failed to send ping to {}",
+                    node_state.node_id, conn
+                );
+            }
+        }
+        false
+    }
+
+    // NOTE:
+    // return false if it fails to pass the criteria of a
+    // leader election
     pub async fn start_leader_election(
         connections: Arc<Vec<SocketAddr>>,
         state: Arc<Mutex<NodeState>>,
     ) -> bool {
         let votes_recieved: Vec<NodeId> = Vec::with_capacity(2);
 
-        for conn in connections.as_ref() {
-            let binding = state.lock();
-            let cur_state = binding.as_ref().unwrap();
+        let cur_state = state.lock().await;
 
-            let vote_request_response = ConnectionLayer::request_vote_wrapper(
-                conn.to_owned(),
-                rpc::LeaderElectionRequest {
-                    term: cur_state.current_term.clone(),
-                    candidate_id: cur_state.node_id.clone(),
-                    last_log_index: cur_state.log.len() - 1,
-                    last_log_term: cur_state
-                        .log
-                        .get(cur_state.log.len() - 1 as usize)
-                        .unwrap()
-                        .term as u64,
-                    node_id: cur_state.node_id,
-                },
-            )
-            .await;
+        for conn in connections.as_ref() {
+
+            // let vote_request_response = ConnectionLayer::request_vote_wrapper(
+            //     conn.to_owned(),
+            //     rpc::LeaderElectionRequest {
+            //         term: cur_state.current_term.clone(),
+            //         candidate_id: cur_state.node_id.clone(),
+            //         last_log_index: cur_state.log.len() - 1,
+            //         last_log_term: cur_state
+            //             .log
+            //             .get(cur_state.log.len() - 1 as usize)
+            //             .unwrap()
+            //             .term as u64,
+            //         node_id: cur_state.node_id,
+            //     },
+            // )
+            // .await;
         }
         false
     }
+
 
     pub fn listen_leader() {
         // run asynchronously in background on intialization
