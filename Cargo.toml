@@ -14,7 +14,7 @@ clap = { version = "4.5.18", features = ["derive"] }
 
 # Tracing & Logging
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["std", "chrono", "fmt"] }
+tracing-subscriber = { version = "0.3.18", features = ["std", "chrono", "fmt", "env-filter"] }
 log = "0.4.22"
 
 # RPC's

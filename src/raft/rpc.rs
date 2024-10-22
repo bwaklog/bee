@@ -4,6 +4,7 @@ use futures::Future;
 use serde::{Deserialize, Serialize};
 use tarpc;
 use tokio::sync::Mutex;
+use tracing::info;
 
 use crate::store;
 
@@ -91,7 +92,7 @@ impl Raft for RaftServer {
         let server = self.node_state.lock().await;
         let current_state = server.get_state();
         if ping == "ping" {
-            println!(
+            info!(
                 "[RPC][ Node {} ] Recieved ping from {}. Current State {:?}",
                 server.node_id, node_id, current_state
             );

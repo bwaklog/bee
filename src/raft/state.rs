@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 use crate::raft::state::state_helpers::gen_rand_id;
 use crate::store::{self, LogEntry};
@@ -162,9 +163,11 @@ impl NodeState {
             }
         }
 
-        println!(
-            "Recovered config\nnode_term: {:#?}\nvoted_for: {:#?}\nlog: {:#?}",
-            node_term, voted_for, log
+        debug!(
+            log = tracing::field::debug(&log),
+            node_term = node_term,
+            voted_for = voted_for,
+            "Recovered config",
         );
 
         // NOTE: my god too many vecs (allocations!)
@@ -181,7 +184,6 @@ impl NodeState {
             sent_length: Vec::new(),
             ack_length: Vec::new(),
         }));
-
     }
 
     // async functions for RPC services
@@ -190,7 +192,6 @@ impl NodeState {
     pub async fn echo(&self, input: String) -> String {
         format!("{input}")
     }
-
 
     #[allow(unused)]
     // return type -> NodeTerm, isLeader
@@ -221,7 +222,6 @@ pub mod state_helpers {
         val
     }
 }
-
 
 // #[cfg(test)]
 // mod tests {

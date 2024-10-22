@@ -17,6 +17,8 @@ use tarpc::server::{self, incoming::Incoming, Channel};
 use tarpc::tokio_serde::formats::Json;
 use tokio;
 use tokio::sync::Mutex;
+use tracing::debug;
+use tracing::warn;
 
 use super::rpc::Raft;
 use super::state::NodeId;
@@ -65,15 +67,15 @@ impl ConnectionLayer {
         addr: &SocketAddr,
         node_state: Arc<Mutex<NodeState>>,
     ) -> ConnErrResult<ConnectionLayer> {
-        println!("[RAFT][INIT_LAYER] Starting tcp listening layer");
+        debug!("[RAFT][INIT_LAYER] Starting tcp listening layer");
 
-        dbg!("node state in timeout service {:#?}", &node_state);
+        // dbg!("node state in timeout service ", &node_state);
 
         let state_clone = Arc::clone(&node_state);
 
         let mut listener = tarpc::serde_transport::tcp::listen(addr, Json::default).await?;
         listener.config_mut().max_frame_length(usize::MAX);
-        println!("[RAFT][LISTENER] Listening {:?}", addr);
+        debug!("[RAFT][LISTENER] Listening {:?}", addr);
 
         tokio::spawn(async move {
             listener
@@ -111,9 +113,14 @@ impl ConnectionLayer {
                 let client = RaftClient::new(client::Config::default(), transp).spawn();
                 let resp = client
                     .ping(context::current(), node_id, format!("ping"))
-                    .await
-                    .expect(&format!("Failed to send ping RPC to {}", sock_addr));
-                return Some(resp);
+                    .await;
+                match resp {
+                    Ok(response) => Some(response),
+                    Err(e) => {
+                        warn!("{:?}", e);
+                        None
+                    }
+                }
             }
             Err(_) => None,
         }
@@ -154,34 +161,3 @@ impl ConnectionLayer {
 // ) -> Option<(String, NodeId)> {
 //     let mut transport = tarpc::serde_transport::tcp::connect(sock_addr, Json::default);
 //     transport.config_mut().max_frame_length(usize::MAX);
-
-//
-// let handle = node_state.lock(); <-- this is a MutexGuard{{error}, NodeState}
-//                                     and this does not a `Send`
-//
-// // while having this lock i try accessing the node_id from this MutexGuard
-// let node_id: u64 = handle.node_id;
-//
-// // while having a lock we await on the tcp transporter
-// match transport.await {
-//                 ^^^^^
-//                 why is this a problem now?
-//
-// Consider a thread where the current function is being executed
-// where we have a lock
-//     T1 ────[LOCK]────[AWAIT] ─────────────
-//                      ^^^^^^^
-//                 here an await is
-//                 called while we have a lock
-//
-//     tokio handles how it resumens execution, after the future
-//     is done executing, this could be on _another thread_?
-//
-//     T1 ────[LOCK]────[AWAIT] ─────────────
-//               │
-//     T2        │                   ─────[LOCK]───
-//               │                            │
-//               └─────────────────┘
-//                 transfering locked
-//                mutex across threads
-// }

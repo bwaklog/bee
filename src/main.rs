@@ -6,6 +6,8 @@ use clap::Parser;
 use raft::raft::Raft;
 use std::{error::Error, path::PathBuf};
 use tokio::signal;
+use tracing::{debug, level_filters::LevelFilter};
+use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -18,16 +20,13 @@ use storage::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // let subscriber = FmtSubscriber::builder()
-    //     .with_max_level(tracing::Level::TRACE)
-    //     .with_timer(time::ChronoLocal::rfc_3339())
-    //     .with_target(true)
-    //     .with_writer(io::stderr)
-    //     .with_file(true)
-    //     .with_line_number(true)
-    //     .finish();
-    //
-    // tracing::subscriber::set_global_default(subscriber)?;
+    let filter = filter::filter_fn(|metadata| metadata.target().starts_with("bee"));
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_line_number(true))
+        .with(tracing_subscriber::fmt::layer().with_filter(LevelFilter::DEBUG))
+        .init();
 
     let args = Args::parse();
 
@@ -36,15 +35,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // compile prtobuf files
 
-    println!("initializing consensus layer");
+    // warn!("initializing consensus layer");
+    debug!("initializing consensus layer");
     let mut raft: Raft = Raft::init(config.raft.clone());
 
-    println!("initializing node daemon");
+    debug!("initializing node daemon");
     tokio::spawn(async move {
         raft.node_daemon().await;
     });
 
-    println!(
+    debug!(
         "[MAIN] Finished initializing raft client: {}",
         config.node_name
     );

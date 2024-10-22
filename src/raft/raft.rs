@@ -13,6 +13,7 @@ use raft::conn::ConnectionLayer;
 use raft::state::NodeId;
 use raft_helpers::gen_rand_timeout;
 use tokio::sync::{self, Mutex};
+use tracing::{debug, info};
 
 use crate::raft;
 use crate::utils::helpers;
@@ -76,7 +77,7 @@ impl Raft {
             let node_id: u64 = state.lock().await.node_id;
 
             loop {
-                tokio::time::sleep(time::Duration::from_secs(rpc_timeout.as_ref().to_owned()))
+                tokio::time::sleep(time::Duration::from_millis(rpc_timeout.as_ref().to_owned()))
                     .await;
 
                 Raft::ping_nodes(Arc::clone(&connections), Arc::clone(&state)).await;
@@ -115,10 +116,10 @@ impl Raft {
         loop {
             tokio::select! {
                 Some(timeout_msg) = timeout_rx.recv() => {
-                    println!("heartbeat wait timeout: {timeout_msg}");
+                    // debug!("heartbeat wait timeout: {timeout_msg}");
                 }
                 Some(conn) = connlayer_rx.recv() => {
-                    println!("{:?}", conn);
+                    // debug!("{:?}", conn);
                 }
             }
         }
@@ -129,7 +130,7 @@ impl Raft {
         // NOTE: persist_path does not implement Copy
         let mut state = NodeState::init_state(raft_config.persist_path.clone());
 
-        println!("[RAFT] recovered/initialized raft state!");
+        debug!("[RAFT] recovered/initialized raft state!");
 
         let timeout = gen_rand_timeout();
         // state.assert_state();
@@ -147,7 +148,7 @@ impl Raft {
     ) -> bool {
         for conn in connections.iter() {
             let node_state = state.lock().await;
-            println!("[ Node {} ] Sending ping to {}", node_state.node_id, conn);
+            // debug!("[ Node {} ] Sending ping to {}", node_state.node_id, conn);
             if let Some(resp) = ConnectionLayer::ping_node_wrapper(
                 conn.to_owned(),
                 format!("ping"),
@@ -155,15 +156,15 @@ impl Raft {
             )
             .await
             {
-                println!(
+                info!(
                     "[ Node {} ] Response from {}: {}",
                     node_state.node_id, conn, resp.0
                 );
             } else {
-                println!(
-                    "[ Node {} ] Failed to send ping to {}",
-                    node_state.node_id, conn
-                );
+                // warn!(
+                //     "[ Node {} ] Failed to send ping to {}",
+                //     node_state.node_id, conn
+                // );
             }
         }
         false
@@ -219,8 +220,8 @@ pub mod raft_helpers {
     use rand::Rng;
     pub fn gen_rand_timeout() -> u64 {
         let mut rng = rand::thread_rng();
-        // let val: u64 = rng.gen_range(200..=500);
-        let val: u64 = rng.gen_range(2..4);
+        let val: u64 = rng.gen_range(200..=500);
+        // let val: u64 = rng.gen_range(2..4);
         val
     }
 }
