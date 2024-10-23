@@ -212,6 +212,31 @@ impl NodeState {
     pub fn node_snapshot(&self) -> Option<NodeState> {
         return Some(self.clone());
     }
+
+    // NOTE:
+    // called when node transitions to a candidate
+    // when the election timer times out
+    pub async fn transition_to_candidate(&mut self) -> bool {
+        if self.node_state == State::CANDIDATE {
+            self.current_term += 1;
+            return true;
+        }
+        if self.voted_for == None {
+            self.current_term += 1;
+            if self.node_state != State::FOLLOWER {
+                return false;
+            }
+            self.voted_for = Some(self.node_id);
+            self.node_state = State::CANDIDATE;
+            return true;
+        }
+        return false;
+    }
+
+    pub fn transition_to_leader(&mut self) -> bool {
+        self.node_state = State::LEADER;
+        return true;
+    }
 }
 
 pub mod state_helpers {

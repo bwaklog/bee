@@ -61,7 +61,7 @@ pub trait Raft {
     async fn echo(input: String) -> String;
 
     // async fn append_entries(request: AppendEntriesRequest) -> AppendEntriesResponse;
-    // async fn leader_election(request: LeaderElectionRequest) -> LeaderElectionResponse;
+    async fn leader_election(request: LeaderElectionRequest) -> LeaderElectionResponse;
 }
 
 #[allow(unused)]
@@ -133,63 +133,63 @@ impl Raft for RaftServer {
     //     })
     // }
 
-    // // NOTE: Options and Results not handled
-    // #[allow(unused)]
-    // fn leader_election(
-    //     self,
-    //     context: tarpc::context::Context,
-    //     request: LeaderElectionRequest,
-    // ) -> Self::LeaderElectionFut {
-    //     future::ready(LeaderElectionResponse {
-    //         term: 0,
-    //         vote_granted: false,
-    //         node_id: 0,
-    //     })
+    // NOTE: Options and Results not handled
+    #[allow(unused)]
+    async fn leader_election(
+        self,
+        context: tarpc::context::Context,
+        request: LeaderElectionRequest,
+    ) -> LeaderElectionResponse {
+        info!(
+            "Recieved leader vote request from [ Node {} ]",
+            request.node_id
+        );
 
-    //     // let mut state_lock = self.node_state.lock();
+        let mut state_lock = self.node_state.lock().await;
 
-    //     // let state_mut = state_lock.as_mut().unwrap();
-    //     // let node_details = state_mut.get_state().unwrap();
+        let node_details = state_lock.get_state().unwrap();
 
-    //     // if node_details.0 > request.term {
-    //     //     future::ready(LeaderElectionResponse {
-    //     //         term: node_details.0,
-    //     //         vote_granted: false,
-    //     //         node_id: state_mut.node_id,
-    //     //     });
-    //     // }
+        if node_details.0 > request.term {
+            return LeaderElectionResponse {
+                term: node_details.0,
+                vote_granted: false,
+                node_id: node_details.2,
+            };
+        }
 
-    //     // // NOTE: this should be usize -> considering log lengths
-    //     // let mut last_term: u64 = 0;
-    //     // if state_mut.log.len() > 0 {
-    //     //     last_term = state_mut.log.len() as u64 - 1;
-    //     // }
+        // NOTE: this should be usize -> considering log lengths
+        let mut last_term: u64 = 0;
+        if state_lock.log.len() > 0 {
+            last_term = state_lock.log.len() as u64 - 1;
+        }
 
-    //     // // checking if the log is ok!
-    //     // let log_ok: bool = (request.last_log_term > last_term)
-    //     //     || (state_mut.current_term == request.term
-    //     //         && request.last_log_index + 1 >= state_mut.log.len());
+        // checking if the log is ok!
+        let log_ok: bool = (request.last_log_term > last_term)
+            || (state_lock.current_term == request.term
+                && request.last_log_index + 1 >= state_lock.log.len());
 
-    //     // let mut voted_for: NodeId = 0;
+        let mut voted_for: NodeId = 0;
 
-    //     // // evaluate the condition
-    //     // // if cTerm == currentTerm ^ logOk ^ votedFor belongs to {cNodeId, null}
-    //     // if request.term == state_mut.current_term
-    //     //     || log_ok
-    //     //     || vec![request.node_id, 0].contains(&state_mut.voted_for.unwrap())
-    //     // {
-    //     //     voted_for = request.node_id;
-    //     //     future::ready(LeaderElectionResponse {
-    //     //         term: state_mut.current_term,
-    //     //         vote_granted: true,
-    //     //         node_id: state_mut.node_id,
-    //     //     })
-    //     // } else {
-    //     //     future::ready(LeaderElectionResponse {
-    //     //         term: state_mut.current_term,
-    //     //         vote_granted: false,
-    //     //         node_id: state_mut.node_id,
-    //     //     })
-    //     // }
-    // }
+        // evaluate the condition
+        // if cTerm == currentTerm ^ logOk ^ votedFor belongs to {cNodeId, null}
+        if request.term == state_lock.current_term
+            || log_ok
+            || (state_lock.voted_for == None || state_lock.voted_for == Some(request.node_id))
+        {
+            state_lock.voted_for = Some(request.node_id);
+            info!("Voted for [ Node {} ]", request.node_id);
+            return LeaderElectionResponse {
+                term: state_lock.current_term,
+                vote_granted: true,
+                node_id: state_lock.node_id,
+            };
+        } else {
+            info!("Rejected voted for [ Node {} ]", request.node_id);
+            return LeaderElectionResponse {
+                term: state_lock.current_term,
+                vote_granted: false,
+                node_id: state_lock.node_id,
+            };
+        }
+    }
 }

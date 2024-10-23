@@ -6,17 +6,21 @@
 
 use core::time;
 use std::net::SocketAddr;
+use std::ops::DerefMut;
 use std::sync::Arc;
 
-use crate::raft::state::NodeState;
+use crate::raft::state::{NodeState, NodeTerm};
 use raft::conn::ConnectionLayer;
 use raft::state::NodeId;
 use raft_helpers::gen_rand_timeout;
 use tokio::sync::{self, Mutex};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::raft;
 use crate::utils::helpers;
+
+use super::rpc;
+use super::state::State;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -74,42 +78,46 @@ impl Raft {
             let tx = Arc::clone(&timeout_tx_arc);
             let rpc_timeout = timeout.clone();
             let state = Arc::clone(&state_clone);
-            let node_id: u64 = state.lock().await.node_id;
+            let safe_state = state.lock().await;
+            let node_id: u64 = safe_state.node_id;
+
+            drop(safe_state);
 
             loop {
-                tokio::time::sleep(time::Duration::from_millis(rpc_timeout.as_ref().to_owned()))
+                tokio::time::sleep(time::Duration::from_secs(rpc_timeout.as_ref().to_owned()))
                     .await;
 
-                Raft::ping_nodes(Arc::clone(&connections), Arc::clone(&state)).await;
-
                 tx.send("heartbeat timeout".to_owned()).await.unwrap();
-                // let cur_state = state.lock().await.node_snapshot().unwrap();
 
-                // let client_addresses = connections.clone().as_ref().clone();
+                info!("Leader heartbeat timed out");
 
-                // for addr in client_addresses.iter() {
-                //     println!("[ Node {} ] Sending ping to {}", cur_state.node_id, addr);
-                //     if let Some(resp) = ConnectionLayer::ping_node_wrapper(
-                //         addr.to_owned(),
-                //         format!("ping"),
-                //         node_id,
-                //     )
-                //     .await {
-                //         println!("[ Node {} ] Response from {}: {}", node_id, resp.1, resp.0);
-                //     }
-                // }
+                let mut node_state_safe = state.lock().await;
+                let mut node_state = node_state_safe.deref_mut();
 
-                // if cur_state.node_state == State::FOLLOWER {
-                //     // Node is a follower
-                //     // start election
-                //     println!(
-                //         "[ Node {} ] Initiating a Leader Election.",
-                //         cur_state.node_id
-                //     );
-                //     Raft::start_leader_election(Arc::clone(&connections), Arc::clone(&state_clone));
-                // } else {
-                //     Raft::ping_nodes(Arc::clone(&conn_sock_addrs), Arc::clone(&state_clone)).await;
-                // }
+                if &node_state.node_state == &State::FOLLOWER {
+                    if node_state.transition_to_candidate().await == false {
+                        warn!("Tried transitioning to candidate failed");
+                    } else {
+                        info!("Transition to candidate");
+                        info!("Initiating leader election for Node {}", node_state.node_id);
+                        let res =
+                            Raft::start_leader_election(Arc::clone(&connections), node_state).await;
+                    }
+                } else if &node_state.node_state == &State::CANDIDATE {
+                    // start leader election in a higher term
+                    info!(
+                        "Already a candidate. Initiating leader election for Node {} in a new term",
+                        node_state.node_id
+                    );
+                    if node_state.transition_to_candidate().await == false {
+                        warn!("Failed to increase term and transition")
+                    } else {
+                        let res =
+                            Raft::start_leader_election(Arc::clone(&connections), node_state).await;
+                    }
+                } else if &node_state.node_state == &State::LEADER {
+                    // Logic
+                }
             }
         });
 
@@ -148,7 +156,6 @@ impl Raft {
     ) -> bool {
         for conn in connections.iter() {
             let node_state = state.lock().await;
-            // debug!("[ Node {} ] Sending ping to {}", node_state.node_id, conn);
             if let Some(resp) = ConnectionLayer::ping_node_wrapper(
                 conn.to_owned(),
                 format!("ping"),
@@ -165,9 +172,10 @@ impl Raft {
                 //     "[ Node {} ] Failed to send ping to {}",
                 //     node_state.node_id, conn
                 // );
+                return false;
             }
         }
-        false
+        true
     }
 
     // NOTE:
@@ -175,33 +183,82 @@ impl Raft {
     // leader election
     pub async fn start_leader_election(
         connections: Arc<Vec<SocketAddr>>,
-        state: Arc<Mutex<NodeState>>,
+        mut state: &mut NodeState,
     ) -> bool {
-        let votes_recieved: Vec<NodeId> = Vec::with_capacity(2);
+        info!("Initiating a leader election");
 
-        let cur_state = state.lock().await;
+        let mut quorum_len: usize;
+        let cluster_size = &connections.len();
+        if state.log.len() % 2 == 0 {
+            quorum_len = (cluster_size + 2) / 2;
+        } else {
+            quorum_len = (cluster_size + 1) / 2;
+        }
+
+        info!(
+            "[ Leader Election ] Need for a quorum of votes: {}",
+            quorum_len
+        );
+
+        let mut votes_recieved: Vec<NodeId> = Vec::with_capacity(2);
 
         for conn in connections.as_ref() {
+            let log_size = state.log.len();
+            let mut last_log_index: usize;
+            if log_size == 0 {
+                last_log_index = 0;
+            } else {
+                last_log_index = state.log.len() - 1;
+            }
 
-            // let vote_request_response = ConnectionLayer::request_vote_wrapper(
-            //     conn.to_owned(),
-            //     rpc::LeaderElectionRequest {
-            //         term: cur_state.current_term.clone(),
-            //         candidate_id: cur_state.node_id.clone(),
-            //         last_log_index: cur_state.log.len() - 1,
-            //         last_log_term: cur_state
-            //             .log
-            //             .get(cur_state.log.len() - 1 as usize)
-            //             .unwrap()
-            //             .term as u64,
-            //         node_id: cur_state.node_id,
-            //     },
-            // )
-            // .await;
+            let mut last_log_term: NodeTerm;
+            match state.log.get(last_log_index) {
+                Some(log_entry) => {
+                    last_log_term = log_entry.term as u64;
+                }
+                None => {
+                    last_log_term = 0;
+                }
+            }
+
+            debug!("Sending Leader Election Request to {}", conn);
+
+            if let Some(vote_request_response) = ConnectionLayer::request_vote_wrapper(
+                conn.to_owned(),
+                rpc::LeaderElectionRequest {
+                    term: state.current_term,
+                    candidate_id: state.node_id,
+                    last_log_index,
+                    last_log_term,
+                    node_id: state.node_id,
+                },
+            )
+            .await
+            {
+                if !vote_request_response.vote_granted {
+                    state.node_state = State::FOLLOWER;
+                    state.current_term = vote_request_response.term;
+                    state.voted_for = None;
+                    return false;
+                } else {
+                    votes_recieved.push(state.node_id);
+                    debug!(
+                        "Recieved vote from [ Node {} ] | Total Votes {}/{}",
+                        vote_request_response.node_id,
+                        votes_recieved.len(),
+                        quorum_len
+                    );
+                    if votes_recieved.len() == quorum_len {
+                        // NOTE:
+                        // here we can progress to a leader
+                        let _res = state.transition_to_leader();
+                        info!("[ Node {} ] Transitioned to State::Leader", state.node_id);
+                    }
+                }
+            }
         }
         false
     }
-
 
     pub fn listen_leader() {
         // run asynchronously in background on intialization
@@ -220,8 +277,8 @@ pub mod raft_helpers {
     use rand::Rng;
     pub fn gen_rand_timeout() -> u64 {
         let mut rng = rand::thread_rng();
-        let val: u64 = rng.gen_range(200..=500);
-        // let val: u64 = rng.gen_range(2..4);
+        // let val: u64 = rng.gen_range(200..=500);
+        let val: u64 = rng.gen_range(2..4);
         val
     }
 }

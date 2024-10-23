@@ -23,6 +23,8 @@ use tracing::warn;
 use super::rpc::Raft;
 use super::state::NodeId;
 use super::state::NodeState;
+use crate::LeaderElectionRequest;
+use crate::LeaderElectionResponse;
 use crate::RaftClient;
 use crate::RaftServer;
 
@@ -126,6 +128,38 @@ impl ConnectionLayer {
         }
     }
 
+    pub async fn request_vote_wrapper(
+        sock_addr: SocketAddr,
+        request: LeaderElectionRequest,
+    ) -> Option<LeaderElectionResponse> {
+        let mut transport = tarpc::serde_transport::tcp::connect(sock_addr, Json::default);
+        transport.config_mut().max_frame_length(usize::MAX);
+
+        // NOTE: (confused)
+        // Where could i go wrong here?
+        // - how do I handle 3 nodes starting from
+        // a FOLLOWER state
+        // - what if the follower
+        //
+
+        match transport.await {
+            Ok(trans) => {
+                let client = RaftClient::new(client::Config::default(), trans).spawn();
+
+                // if let Some(resp) = client.leader_election(context::current(), request).await.unwrap() {
+
+                if let Ok(resp) = client.leader_election(context::current(), request).await {
+                    return Some(resp);
+                } else {
+                    return None;
+                }
+            }
+            Err(_) => {
+                return None;
+            }
+        }
+    }
+
     // pub async fn request_vote_wrapper(
     //     sock_addr: SocketAddr,
     //     request: LeaderElectionRequest,
@@ -153,11 +187,3 @@ impl ConnectionLayer {
     //     }
     // }
 }
-
-// pub async fn ping_node_wrapper(
-//     sock_addr: SocketAddr,
-//     request: String,
-//     node_state: Arc<Mutex<NodeState>>,
-// ) -> Option<(String, NodeId)> {
-//     let mut transport = tarpc::serde_transport::tcp::connect(sock_addr, Json::default);
-//     transport.config_mut().max_frame_length(usize::MAX);

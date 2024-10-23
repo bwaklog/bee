@@ -6,7 +6,7 @@ use clap::Parser;
 use raft::raft::Raft;
 use std::{error::Error, path::PathBuf};
 use tokio::signal;
-use tracing::{debug, level_filters::LevelFilter};
+use tracing::{debug, level_filters::LevelFilter, warn};
 use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 #[derive(Parser, Debug)]
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().with_line_number(true))
+        // .with(tracing_subscriber::fmt::layer().with_line_number(true))
         .with(tracing_subscriber::fmt::layer().with_filter(LevelFilter::DEBUG))
         .init();
 
@@ -33,9 +33,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = utils::helpers::parse_config(PathBuf::from(args.conf_path)).unwrap();
     // dbg!(&config);
 
-    // compile prtobuf files
-
-    // warn!("initializing consensus layer");
     debug!("initializing consensus layer");
     let mut raft: Raft = Raft::init(config.raft.clone());
 
@@ -52,7 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match signal::ctrl_c().await {
         Ok(()) => {}
         Err(e) => {
-            println!("Unable to listen for shutdown: {:?}", e)
+            warn!("Unable to listen for shutdown: {:?}", e)
         }
     }
 
